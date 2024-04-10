@@ -4,8 +4,8 @@ from flask import Flask, render_template, request, flash, redirect, session, g
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
-from forms import UserAddForm, LoginForm, MessageForm
-from models import db, connect_db, User, Message
+from forms import UserAddForm, LoginForm, MessageForm, EditUserForm
+from models import db, connect_db, User, Message, Likes
 
 CURR_USER_KEY = "curr_user"
 
@@ -215,7 +215,23 @@ def stop_following(follow_id):
 @app.route("/users/profile", methods=["GET", "POST"])
 def profile():
     """Update profile for current user."""
-
+    form = EditUserForm()
+    user = User.query.get(session[CURR_USER_KEY])
+    if form.is_submitted() and form.validate():
+        if User.authenticate(username=user.username, password=form.password.data):
+            user.username = form.username.data
+            user.bio = form.bio.data
+            user.email = form.email.data
+            if form.image_url.data:
+                user.image_url = form.image_url.data
+            if form.header_image_url.data:
+                user.header_image_url = form.header_image_url.data
+            db.session.commit()
+            return redirect(f"/users/{user.id}")
+        else:
+            flash("Error: Passwords do not match!")
+            return redirect("/")
+    return render_template("users/edit.html", form=form)
     # IMPLEMENT THIS
 
 
@@ -233,6 +249,20 @@ def delete_user():
     db.session.commit()
 
     return redirect("/signup")
+
+
+@app.route("/users/add_like/<int:msgid>", methods=["POST"])
+def add_like(msgid):
+    liked = Likes.query.filter(
+        Likes.message_id == msgid and Likes.user_id == g.user.id
+    ).first()
+    if liked:
+        db.session.delete(liked)
+    else:
+        like = Likes(user_id=g.user.id, message_id=msgid)
+        db.session.add(like)
+    db.session.commit()
+    return redirect("/")
 
 
 ##############################################################################
@@ -298,7 +328,14 @@ def homepage():
     """
 
     if g.user:
-        messages = Message.query.order_by(Message.timestamp.desc()).limit(100).all()
+        following = [f.id for f in g.user.following] + [g.user.id]
+
+        messages = (
+            Message.query.filter(Message.user_id.in_(following))
+            .order_by(Message.timestamp.desc())
+            .limit(100)
+            .all()
+        )
 
         return render_template("home.html", messages=messages)
 
